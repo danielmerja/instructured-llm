@@ -4,7 +4,7 @@ package sliceutil
 // If nums is empty, it returns 0.
 func MinInt(nums []int) int {
 	var m int
-	for idx := range nums {
+	for idx := 0; idx < len(nums); idx++ {
 		item := nums[idx]
 		if idx == 0 {
 			m = item

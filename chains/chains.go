@@ -176,7 +176,7 @@ func Apply(ctx context.Context, c Chain, inputValues []map[string]any, maxWorker
 	var wg sync.WaitGroup
 	wg.Add(maxWorkers)
 
-	for range maxWorkers {
+	for w := 0; w < maxWorkers; w++ {
 		go func() {
 			defer wg.Done()
 			for {

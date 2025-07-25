@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/tmc/langchaingo/callbacks"
 	"github.com/tmc/langchaingo/chains"
@@ -63,16 +62,14 @@ func NewOneShotAgent(llm llms.Model, tools []tools.Tool, opts ...Option) *OneSho
 func (a *OneShotZeroAgent) Plan(
 	ctx context.Context,
 	intermediateSteps []schema.AgentStep,
-	inputs map[string]any,
-	_ []llms.ChatMessage,
-) ([]schema.AgentAction, *schema.AgentFinish, []llms.ChatMessage, error) {
+	inputs map[string]string,
+) ([]schema.AgentAction, *schema.AgentFinish, error) {
 	fullInputs := make(map[string]any, len(inputs))
 	for key, value := range inputs {
 		fullInputs[key] = value
 	}
 
 	fullInputs["agent_scratchpad"] = constructMrklScratchPad(intermediateSteps)
-	fullInputs["today"] = time.Now().Format("January 02, 2006")
 
 	var stream func(ctx context.Context, chunk []byte) error
 
@@ -91,7 +88,7 @@ func (a *OneShotZeroAgent) Plan(
 		chains.WithStreamingFunc(stream),
 	)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 
 	return a.parseOutput(output)
@@ -103,7 +100,7 @@ func (a *OneShotZeroAgent) GetInputKeys() []string {
 	// Remove inputs given in plan.
 	agentInput := make([]string, 0, len(chainInputs))
 	for _, v := range chainInputs {
-		if v == "agent_scratchpad" || v == "today" {
+		if v == "agent_scratchpad" {
 			continue
 		}
 		agentInput = append(agentInput, v)
@@ -132,7 +129,7 @@ func constructMrklScratchPad(steps []schema.AgentStep) string {
 	return scratchPad
 }
 
-func (a *OneShotZeroAgent) parseOutput(output string) ([]schema.AgentAction, *schema.AgentFinish, []llms.ChatMessage, error) {
+func (a *OneShotZeroAgent) parseOutput(output string) ([]schema.AgentAction, *schema.AgentFinish, error) {
 	if strings.Contains(output, _finalAnswerAction) {
 		splits := strings.Split(output, _finalAnswerAction)
 
@@ -141,16 +138,16 @@ func (a *OneShotZeroAgent) parseOutput(output string) ([]schema.AgentAction, *sc
 				a.OutputKey: splits[len(splits)-1],
 			},
 			Log: output,
-		}, nil, nil
+		}, nil
 	}
 
 	r := regexp.MustCompile(`Action:\s*(.+)\s*Action Input:\s(?s)*(.+)`)
 	matches := r.FindStringSubmatch(output)
 	if len(matches) == 0 {
-		return nil, nil, nil, fmt.Errorf("%w: %s", ErrUnableToParseOutput, output)
+		return nil, nil, fmt.Errorf("%w: %s", ErrUnableToParseOutput, output)
 	}
 
 	return []schema.AgentAction{
 		{Tool: strings.TrimSpace(matches[1]), ToolInput: strings.TrimSpace(matches[2]), Log: output},
-	}, nil, nil, nil
+	}, nil, nil
 }

@@ -2,7 +2,6 @@ package chains
 
 import (
 	"context"
-	"slices"
 
 	"github.com/tmc/langchaingo/callbacks"
 	"github.com/tmc/langchaingo/llms"
@@ -81,7 +80,7 @@ func (c LLMChain) GetCallbackHandler() callbacks.Handler { //nolint:ireturn
 
 // GetInputKeys returns the expected input keys.
 func (c LLMChain) GetInputKeys() []string {
-	return slices.Clone(c.Prompt.GetInputVariables())
+	return append([]string{}, c.Prompt.GetInputVariables()...)
 }
 
 // GetOutputKeys returns the output keys the chain will return.
