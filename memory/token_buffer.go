@@ -2,7 +2,6 @@ package memory
 
 import (
 	"context"
-	"slices"
 
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/schema"
@@ -71,7 +70,7 @@ func (tb *ConversationTokenBuffer) SaveContext(
 				break
 			}
 
-			err = tb.ChatHistory.SetMessages(ctx, slices.Delete(messages, 0, 1))
+			err = tb.ChatHistory.SetMessages(ctx, append(messages[:0], messages[1:]...))
 			if err != nil {
 				return err
 			}
