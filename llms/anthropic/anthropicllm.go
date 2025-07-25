@@ -6,10 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"os"
 
 	"github.com/tmc/langchaingo/callbacks"
+	"github.com/tmc/langchaingo/httputil"
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/llms/anthropic/internal/anthropicclient"
 )
@@ -51,7 +51,7 @@ func newClient(opts ...Option) (*anthropicclient.Client, error) {
 	options := &options{
 		token:      os.Getenv(tokenEnvVarName),
 		baseURL:    anthropicclient.DefaultBaseURL,
-		httpClient: http.DefaultClient,
+		httpClient: httputil.DefaultClient,
 	}
 
 	for _, opt := range opts {
@@ -302,7 +302,7 @@ func handleHumanMessage(msg llms.MessageContent) (anthropicclient.ChatMessage, e
 
 func handleAIMessage(msg llms.MessageContent) (anthropicclient.ChatMessage, error) {
 	if toolCall, ok := msg.Parts[0].(llms.ToolCall); ok {
-		var inputStruct map[string]any
+		var inputStruct map[string]interface{}
 		err := json.Unmarshal([]byte(toolCall.FunctionCall.Arguments), &inputStruct)
 		if err != nil {
 			return anthropicclient.ChatMessage{}, fmt.Errorf("anthropic: failed to unmarshal tool call arguments: %w", err)
