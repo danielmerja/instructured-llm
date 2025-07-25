@@ -152,7 +152,7 @@ func (e *Executor) doAction(
 			return
 		}
 
-		observation, err := tool.Call(ctx, action.ToolInput)
+		observation, err := tool.Call(ctx, strings.TrimSuffix(action.ToolInput, "\nObservation:"))
 		if err != nil {
 			agentStepStream <- schema.AgentStepWithError{
 				AgentStep: schema.AgentStep{}, Error: err,
