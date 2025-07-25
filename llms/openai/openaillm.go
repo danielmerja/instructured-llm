@@ -43,7 +43,17 @@ func (o *LLM) Call(ctx context.Context, prompt string, options ...llms.CallOptio
 	return llms.GenerateFromSinglePrompt(ctx, o, prompt, options...)
 }
 
-func buildMessagesForRequestFromContent(messages []llms.MessageContent) ([]*ChatMessage, error) {
+// GenerateContent implements the Model interface.
+func (o *LLM) GenerateContent(ctx context.Context, messages []llms.MessageContent, options ...llms.CallOption) (*llms.ContentResponse, error) { //nolint: lll, cyclop, funlen
+	if o.CallbacksHandler != nil {
+		o.CallbacksHandler.HandleLLMGenerateContentStart(ctx, messages)
+	}
+
+	opts := llms.CallOptions{}
+	for _, opt := range options {
+		opt(&opts)
+	}
+
 	chatMsgs := make([]*ChatMessage, 0, len(messages))
 	for _, mc := range messages {
 		msg := &ChatMessage{MultiContent: mc.Parts}
@@ -58,6 +68,13 @@ func buildMessagesForRequestFromContent(messages []llms.MessageContent) ([]*Chat
 			msg.Role = RoleUser
 		case llms.ChatMessageTypeFunction:
 			msg.Role = RoleFunction
+			// Extract name and content from ToolCallResponse for function messages
+			if len(mc.Parts) == 1 {
+				if p, ok := mc.Parts[0].(llms.ToolCallResponse); ok {
+					msg.Name = p.Name
+					msg.Content = p.Content
+				}
+			}
 		case llms.ChatMessageTypeTool:
 			msg.Role = RoleTool
 			// Here we extract tool calls from the message and populate the ToolCalls field.
@@ -84,24 +101,6 @@ func buildMessagesForRequestFromContent(messages []llms.MessageContent) ([]*Chat
 		msg.ToolCalls = toolCallsFromToolCalls(toolCalls)
 
 		chatMsgs = append(chatMsgs, msg)
-	}
-	return chatMsgs, nil
-}
-
-// GenerateContent implements the Model interface.
-func (o *LLM) GenerateContent(ctx context.Context, messages []llms.MessageContent, options ...llms.CallOption) (*llms.ContentResponse, error) { //nolint: lll, cyclop, goerr113, funlen
-	if o.CallbacksHandler != nil {
-		o.CallbacksHandler.HandleLLMGenerateContentStart(ctx, messages)
-	}
-
-	opts := llms.CallOptions{}
-	for _, opt := range options {
-		opt(&opts)
-	}
-
-	chatMsgs, err := buildMessagesForRequestFromContent(messages)
-	if err != nil {
-		return nil, err
 	}
 	req := &openaiclient.ChatRequest{
 		Model:                  opts.Model,
@@ -161,26 +160,15 @@ func (o *LLM) GenerateContent(ctx context.Context, messages []llms.MessageConten
 
 	choices := make([]*llms.ContentChoice, len(result.Choices))
 	for i, c := range result.Choices {
-		llmMessage, err := messageFromMessage(c.Message)
-		if err != nil {
-			return nil, err
-		}
 		choices[i] = &llms.ContentChoice{
 			Content:    c.Message.Content,
 			StopReason: fmt.Sprint(c.FinishReason),
 			GenerationInfo: map[string]any{
-				"CompletionTokens":                   result.Usage.CompletionTokens,
-				"PromptTokens":                       result.Usage.PromptTokens,
-				"TotalTokens":                        result.Usage.TotalTokens,
-				"ReasoningTokens":                    result.Usage.CompletionTokensDetails.ReasoningTokens,
-				"PromptAudioTokens":                  result.Usage.PromptTokensDetails.AudioTokens,
-				"PromptCachedTokens":                 result.Usage.PromptTokensDetails.CachedTokens,
-				"CompletionAudioTokens":              result.Usage.CompletionTokensDetails.AudioTokens,
-				"CompletionReasoningTokens":          result.Usage.CompletionTokensDetails.ReasoningTokens,
-				"CompletionAcceptedPredictionTokens": result.Usage.CompletionTokensDetails.AcceptedPredictionTokens,
-				"CompletionRejectedPredictionTokens": result.Usage.CompletionTokensDetails.RejectedPredictionTokens,
+				"CompletionTokens": result.Usage.CompletionTokens,
+				"PromptTokens":     result.Usage.PromptTokens,
+				"TotalTokens":      result.Usage.TotalTokens,
+				"ReasoningTokens":  result.Usage.CompletionTokensDetails.ReasoningTokens,
 			},
-			ChatMessage: llmMessage,
 		}
 
 		// Legacy function call handling
@@ -190,21 +178,19 @@ func (o *LLM) GenerateContent(ctx context.Context, messages []llms.MessageConten
 				Arguments: c.Message.FunctionCall.Arguments,
 			}
 		}
-		if c.FinishReason == "tool_calls" {
-			for _, tool := range c.Message.ToolCalls {
-				choices[i].ToolCalls = append(choices[i].ToolCalls, llms.ToolCall{
-					ID:   tool.ID,
-					Type: string(tool.Type),
-					FunctionCall: &llms.FunctionCall{
-						Name:      tool.Function.Name,
-						Arguments: tool.Function.Arguments,
-					},
-				})
-			}
-			// populate legacy single-function call field for backwards compatibility
-			if len(choices[i].ToolCalls) > 0 {
-				choices[i].FuncCall = choices[i].ToolCalls[0].FunctionCall
-			}
+		for _, tool := range c.Message.ToolCalls {
+			choices[i].ToolCalls = append(choices[i].ToolCalls, llms.ToolCall{
+				ID:   tool.ID,
+				Type: string(tool.Type),
+				FunctionCall: &llms.FunctionCall{
+					Name:      tool.Function.Name,
+					Arguments: tool.Function.Arguments,
+				},
+			})
+		}
+		// populate legacy single-function call field for backwards compatibility
+		if len(choices[i].ToolCalls) > 0 {
+			choices[i].FuncCall = choices[i].ToolCalls[0].FunctionCall
 		}
 	}
 	response := &llms.ContentResponse{Choices: choices}
@@ -268,31 +254,6 @@ func toolFromTool(t llms.Tool) (openaiclient.Tool, error) {
 		return openaiclient.Tool{}, fmt.Errorf("tool type %v not supported", t.Type)
 	}
 	return tool, nil
-}
-
-// messageFromMessage converts a openAI ChatMessage to llms.ChatMessage to pass in next iteration for agentic flow.
-func messageFromMessage(c ChatMessage) (llms.ChatMessage, error) {
-	// TODO need to support only returned assistant tool_calls message for now
-	switch c.Role {
-	case "assistant":
-		var llmToolCalls []llms.ToolCall
-		for _, toolCall := range c.ToolCalls {
-			llmToolCalls = append(llmToolCalls, llms.ToolCall{
-				ID:   toolCall.ID,
-				Type: string(toolCall.Type),
-				FunctionCall: &llms.FunctionCall{
-					Name:      toolCall.Function.Name,
-					Arguments: toolCall.Function.Arguments,
-				},
-			})
-		}
-		return llms.AIChatMessage{
-			Content:   c.Content,
-			ToolCalls: llmToolCalls,
-		}, nil
-	default:
-		return nil, fmt.Errorf("message role %v not supported", c.Role)
-	}
 }
 
 // toolCallsFromToolCalls converts a slice of llms.ToolCall to a slice of ToolCall.
